@@ -1,0 +1,42 @@
+data:
+  train_csv: data/train.csv
+  dev_csv: data/dev.csv
+  train_audio_dir: data/
+  dev_audio_dir: data/
+  sample_rate: 16000
+  n_mels: 80
+  n_fft: 512
+  hop_length: 160   # 10 ms at 16 kHz
+  win_length: 400   # 25 ms at 16 kHz
+  f_min: 80.0
+  f_max: 7600.0
+
+model:
+  d_model: 144
+  ff_dim: 576
+  n_heads: 4
+  n_layers: 6
+  conv_kernel: 31
+  dropout: 0.1
+  n_mels: 80
+
+training:
+  batch_size: 32
+  learning_rate: 5.0e-4
+  warmup_steps: 5000
+  max_epochs: 120
+  grad_clip: 1.0
+  weight_decay: 1.0e-6
+  num_workers: 4
+  checkpoint_dir: checkpoints/
+  log_interval: 50
+  save_top_k: 3
+
+augmentation:
+  speed_perturbation: true
+  speed_rates: [0.9, 1.0, 1.1]
+  spec_augment: true
+  time_mask_param: 80
+  freq_mask_param: 20
+  num_time_masks: 2
+  num_freq_masks: 2

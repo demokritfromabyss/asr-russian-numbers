@@ -1,0 +1,10 @@
+torch>=2.0.0
+torchaudio>=2.0.0
+numpy>=1.24.0
+pandas>=2.0.0
+num2words>=0.5.12
+tqdm>=4.65.0
+PyYAML>=6.0
+soundfile>=0.12.1
+torchmetrics>=1.0.0
+editdistance>=0.6.3
