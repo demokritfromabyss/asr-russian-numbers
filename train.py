@@ -169,7 +169,7 @@ def main():
         pin_memory=True, drop_last=True,
     )
     dev_loader = DataLoader(
-        dev_ds, batch_size=t_cfg['batch_size'] * 2, shuffle=False,
+        dev_ds, batch_size=t_cfg['batch_size'] // 2, shuffle=False,
         num_workers=t_cfg.get('num_workers', 4), collate_fn=collate_fn,
         pin_memory=True,
     )
@@ -213,6 +213,7 @@ def main():
             model, train_loader, optimizer, scheduler, criterion, device, cfg, epoch, global_step
         )
 
+        torch.cuda.empty_cache()
         val = validate(model, dev_loader, criterion, vocab, device, ind_spks, ood_spks)
 
         print(
