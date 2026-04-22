@@ -86,14 +86,15 @@ def main():
     train_spks = set(train_df['spk_id'].unique())
 
     dev_ds = AudioDataset(cfg['data']['dev_csv'], cfg['data']['dev_audio_dir'], vocab, cfg, is_train=False)
-    dev_loader = DataLoader(dev_ds, batch_size=64, shuffle=False,
-                            num_workers=4, collate_fn=collate_fn)
+    dev_loader = DataLoader(dev_ds, batch_size=16, shuffle=False,
+                            num_workers=2, collate_fn=collate_fn)
 
     model = build_model(cfg, vocab.size).to(device)
     ckpt = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(ckpt['model'])
     print(f'Loaded checkpoint (epoch {ckpt.get("epoch", "?")})')
 
+    torch.cuda.empty_cache()
     evaluate(model, dev_loader, vocab, device, train_spks)
 
 
