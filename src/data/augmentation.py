@@ -1,5 +1,7 @@
 """Audio and spectrogram augmentations for training robustness."""
 
+import glob
+import os
 import random
 import torch
 import torchaudio
@@ -22,28 +24,79 @@ class SpeedPerturbation:
         return perturbed
 
 
-class PitchPerturbation:
-    """Shifts pitch by a random number of semitones via resampling trick."""
+class AddBackgroundNoise:
+    """Mixes speech with a random noise file from MUSAN at a random SNR."""
 
-    def __init__(self, steps: list = (-2, -1, 0, 1, 2)):
-        self.steps = steps
+    def __init__(self, noise_dir: str, snr_db_range: tuple = (5, 20)):
+        self.snr_min, self.snr_max = snr_db_range
+        self.noise_files = (
+            glob.glob(os.path.join(noise_dir, "**/*.wav"), recursive=True) +
+            glob.glob(os.path.join(noise_dir, "**/*.flac"), recursive=True)
+        )
+        if self.noise_files:
+            print(f"AddBackgroundNoise: loaded {len(self.noise_files)} noise files from {noise_dir}")
 
     def __call__(self, waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
-        step = random.choice(self.steps)
-        if step == 0:
+        if not self.noise_files:
             return waveform
-        # Pitch shift via resampling: change SR without changing duration
-        factor = 2 ** (step / 12.0)
-        new_sr = int(sample_rate * factor)
-        shifted = torchaudio.functional.resample(waveform, sample_rate, new_sr)
-        # Restore original length to keep time alignment
-        shifted = torchaudio.functional.resample(shifted, new_sr, sample_rate)
-        orig_len = waveform.shape[-1]
-        if shifted.shape[-1] > orig_len:
-            shifted = shifted[..., :orig_len]
-        elif shifted.shape[-1] < orig_len:
-            shifted = torch.nn.functional.pad(shifted, (0, orig_len - shifted.shape[-1]))
-        return shifted
+
+        noise, noise_sr = torchaudio.load(random.choice(self.noise_files))
+        if noise_sr != sample_rate:
+            noise = torchaudio.functional.resample(noise, noise_sr, sample_rate)
+        if noise.shape[0] > 1:
+            noise = noise.mean(0, keepdim=True)
+
+        # Tile noise to match speech length
+        speech_len = waveform.shape[-1]
+        if noise.shape[-1] < speech_len:
+            repeats = (speech_len // noise.shape[-1]) + 1
+            noise = noise.repeat(1, repeats)
+        noise = noise[..., :speech_len]
+
+        snr_db = random.uniform(self.snr_min, self.snr_max)
+        snr_linear = 10 ** (snr_db / 20)
+        speech_power = waveform.norm(p=2)
+        noise_power = noise.norm(p=2)
+        noise = noise * (speech_power / (noise_power * snr_linear + 1e-9))
+        return waveform + noise
+
+
+class AddReverb:
+    """Convolves speech with a random room impulse response (RIR)."""
+
+    def __init__(self, rir_dir: str):
+        self.rir_files = (
+            glob.glob(os.path.join(rir_dir, "**/*.wav"), recursive=True) +
+            glob.glob(os.path.join(rir_dir, "**/*.flac"), recursive=True)
+        )
+        if self.rir_files:
+            print(f"AddReverb: loaded {len(self.rir_files)} RIR files from {rir_dir}")
+
+    def __call__(self, waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
+        if not self.rir_files:
+            return waveform
+
+        rir, rir_sr = torchaudio.load(random.choice(self.rir_files))
+        if rir_sr != sample_rate:
+            rir = torchaudio.functional.resample(rir, rir_sr, sample_rate)
+        if rir.shape[0] > 1:
+            rir = rir.mean(0, keepdim=True)
+
+        rir = rir / (rir.norm(p=2) + 1e-9)
+        reverbed = torchaudio.functional.fftconvolve(waveform, rir)
+        return reverbed[..., :waveform.shape[-1]]
+
+
+class VolumePerturb:
+    """Randomly scales waveform amplitude by ±6 dB."""
+
+    def __init__(self, gain_db_range: tuple = (-6, 6)):
+        self.min_db, self.max_db = gain_db_range
+
+    def __call__(self, waveform: torch.Tensor) -> torch.Tensor:
+        gain_db = random.uniform(self.min_db, self.max_db)
+        gain = 10 ** (gain_db / 20)
+        return waveform * gain
 
 
 class AddGaussianNoise:
@@ -79,7 +132,6 @@ class SpecAugment:
         self.freq_masks = [T.FrequencyMasking(freq_mask_param, iid_masks=True) for _ in range(num_freq_masks)]
 
     def __call__(self, mel: torch.Tensor) -> torch.Tensor:
-        # mel: (T, F) → convert to (1, F, T) for torchaudio masking
         x = mel.T.unsqueeze(0)          # (1, F, T)
         for mask in self.freq_masks:
             x = mask(x)
@@ -94,15 +146,25 @@ class WaveformAugment:
     def __init__(self, cfg: dict):
         self.speed = SpeedPerturbation(tuple(cfg.get('speed_rates', [0.9, 1.0, 1.1]))) \
             if cfg.get('speed_perturbation', True) else None
-        self.pitch = PitchPerturbation(cfg.get('pitch_shift_steps', [-2, -1, 0, 1, 2])) \
-            if cfg.get('pitch_perturbation', False) else None
-        self.noise = AddGaussianNoise()
+
+        noise_dir = cfg.get('musan_noise_dir', '')
+        self.bg_noise = AddBackgroundNoise(noise_dir) if noise_dir else None
+
+        rir_dir = cfg.get('rir_dir', '')
+        self.reverb = AddReverb(rir_dir) if rir_dir else None
+
+        self.volume = VolumePerturb()
+        self.gaussian = AddGaussianNoise()
 
     def __call__(self, waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
         if self.speed is not None and random.random() < 0.5:
             waveform = self.speed(waveform, sample_rate)
-        if self.pitch is not None and random.random() < 0.4:
-            waveform = self.pitch(waveform, sample_rate)
-        if random.random() < 0.3:
-            waveform = self.noise(waveform)
+        if self.reverb is not None and random.random() < 0.5:
+            waveform = self.reverb(waveform, sample_rate)
+        if self.bg_noise is not None and random.random() < 0.5:
+            waveform = self.bg_noise(waveform, sample_rate)
+        elif random.random() < 0.3:
+            waveform = self.gaussian(waveform)
+        if random.random() < 0.5:
+            waveform = self.volume(waveform)
         return waveform

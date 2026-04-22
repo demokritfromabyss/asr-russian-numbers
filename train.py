@@ -239,6 +239,10 @@ def main():
         }
         save_checkpoint(state, os.path.join(ckpt_dir, 'last.pt'))
 
+        # Save per-epoch checkpoint for later averaging (every 5 epochs after warmup)
+        if epoch >= t_cfg.get('warmup_steps', 5000) // max(len(train_loader), 1) and epoch % 5 == 0:
+            save_checkpoint(state, os.path.join(ckpt_dir, f'epoch_{epoch:03d}.pt'))
+
         if val['hm_cer'] < best_cer:
             best_cer = val['hm_cer']
             state['best_cer'] = best_cer

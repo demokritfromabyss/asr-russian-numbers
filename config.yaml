@@ -31,7 +31,7 @@ training:
   checkpoint_dir: checkpoints/
   log_interval: 50
   save_top_k: 3
-  label_smoothing: 0.1   # entropy regularization weight
+  label_smoothing: 0.0   # disabled — hurts words_to_num parsing
 
 decoding:
   beam_width: 10         # 1 = greedy, >1 = beam search
@@ -44,5 +44,6 @@ augmentation:
   freq_mask_param: 20
   num_time_masks: 2
   num_freq_masks: 2
-  pitch_perturbation: true
-  pitch_shift_steps: [-2, -1, 0, 1, 2]  # semitones
+  pitch_perturbation: false
+  musan_noise_dir: ""   # set in Colab: /content/musan/noise
+  rir_dir: ""           # set in Colab: /content/RIRS_NOISES/simulated_rirs
