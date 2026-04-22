@@ -30,7 +30,7 @@ def load_cfg(path):
 
 
 @torch.no_grad()
-def run_inference(model, loader, vocab, device):
+def run_inference(model, loader, vocab, device, beam_width: int = 1):
     model.eval()
     filenames_all, predictions_all = [], []
 
@@ -39,7 +39,7 @@ def run_inference(model, loader, vocab, device):
         mel_lengths = mel_lengths.to(device)
 
         log_probs, out_lengths = model(mels, mel_lengths)
-        hyps_words = batch_decode(log_probs, out_lengths, vocab)
+        hyps_words = batch_decode(log_probs, out_lengths, vocab, beam_width=beam_width)
 
         for fname, words in zip(filenames, hyps_words):
             digit_str = words_to_num(words)
@@ -64,15 +64,17 @@ def main():
     vocab = Vocabulary()
 
     test_ds = TestDataset(args.test_csv, args.audio_dir, cfg)
-    test_loader = DataLoader(test_ds, batch_size=64, shuffle=False,
-                             num_workers=4, collate_fn=collate_fn_test)
+    test_loader = DataLoader(test_ds, batch_size=16, shuffle=False,
+                             num_workers=2, collate_fn=collate_fn_test)
 
     model = build_model(cfg, vocab.size).to(device)
     ckpt = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(ckpt['model'])
     print(f'Loaded checkpoint from {args.checkpoint}')
 
-    filenames, predictions = run_inference(model, test_loader, vocab, device)
+    beam_width = cfg.get('decoding', {}).get('beam_width', 10)
+    print(f'Decoding with beam_width={beam_width}')
+    filenames, predictions = run_inference(model, test_loader, vocab, device, beam_width=beam_width)
 
     submission = pd.DataFrame({'filename': filenames, 'transcription': predictions})
     submission.to_csv(args.output, index=False)

@@ -24,7 +24,7 @@ def load_cfg(path):
 
 
 @torch.no_grad()
-def evaluate(model, loader, vocab, device, train_spks):
+def evaluate(model, loader, vocab, device, train_spks, beam_width: int = 1):
     model.eval()
     all_hyps, all_refs, all_spks = [], [], []
 
@@ -33,7 +33,7 @@ def evaluate(model, loader, vocab, device, train_spks):
         mel_lengths = mel_lengths.to(device)
 
         log_probs, out_lengths = model(mels, mel_lengths)
-        hyps_words = batch_decode(log_probs, out_lengths, vocab)
+        hyps_words = batch_decode(log_probs, out_lengths, vocab, beam_width=beam_width)
 
         for i, tok in enumerate(tokens):
             T = int(token_lengths[i].item())
@@ -94,8 +94,10 @@ def main():
     model.load_state_dict(ckpt['model'])
     print(f'Loaded checkpoint (epoch {ckpt.get("epoch", "?")})')
 
+    beam_width = cfg.get('decoding', {}).get('beam_width', 1)
+    print(f'Decoding with beam_width={beam_width}')
     torch.cuda.empty_cache()
-    evaluate(model, dev_loader, vocab, device, train_spks)
+    evaluate(model, dev_loader, vocab, device, train_spks, beam_width=beam_width)
 
 
 if __name__ == '__main__':

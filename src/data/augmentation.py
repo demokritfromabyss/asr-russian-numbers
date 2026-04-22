@@ -16,15 +16,34 @@ class SpeedPerturbation:
         rate = random.choice(self.rates)
         if rate == 1.0:
             return waveform
-        # Resample to a "virtual" sample rate, then interpret as original rate.
-        # This stretches/compresses time without changing pitch frequency.
-        orig_len = waveform.shape[-1]
         new_sr = int(sample_rate * rate)
         perturbed = torchaudio.functional.resample(waveform, sample_rate, new_sr)
-        # Resize back so downstream mel transform stays consistent
-        target_len = int(orig_len / rate)
         perturbed = torchaudio.functional.resample(perturbed, new_sr, sample_rate)
         return perturbed
+
+
+class PitchPerturbation:
+    """Shifts pitch by a random number of semitones via resampling trick."""
+
+    def __init__(self, steps: list = (-2, -1, 0, 1, 2)):
+        self.steps = steps
+
+    def __call__(self, waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
+        step = random.choice(self.steps)
+        if step == 0:
+            return waveform
+        # Pitch shift via resampling: change SR without changing duration
+        factor = 2 ** (step / 12.0)
+        new_sr = int(sample_rate * factor)
+        shifted = torchaudio.functional.resample(waveform, sample_rate, new_sr)
+        # Restore original length to keep time alignment
+        shifted = torchaudio.functional.resample(shifted, new_sr, sample_rate)
+        orig_len = waveform.shape[-1]
+        if shifted.shape[-1] > orig_len:
+            shifted = shifted[..., :orig_len]
+        elif shifted.shape[-1] < orig_len:
+            shifted = torch.nn.functional.pad(shifted, (0, orig_len - shifted.shape[-1]))
+        return shifted
 
 
 class AddGaussianNoise:
@@ -75,11 +94,15 @@ class WaveformAugment:
     def __init__(self, cfg: dict):
         self.speed = SpeedPerturbation(tuple(cfg.get('speed_rates', [0.9, 1.0, 1.1]))) \
             if cfg.get('speed_perturbation', True) else None
+        self.pitch = PitchPerturbation(cfg.get('pitch_shift_steps', [-2, -1, 0, 1, 2])) \
+            if cfg.get('pitch_perturbation', False) else None
         self.noise = AddGaussianNoise()
 
     def __call__(self, waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
         if self.speed is not None and random.random() < 0.5:
             waveform = self.speed(waveform, sample_rate)
+        if self.pitch is not None and random.random() < 0.4:
+            waveform = self.pitch(waveform, sample_rate)
         if random.random() < 0.3:
             waveform = self.noise(waveform)
         return waveform

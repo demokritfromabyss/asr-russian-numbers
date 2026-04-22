@@ -74,6 +74,12 @@ def train_epoch(model, loader, optimizer, scheduler, criterion, device, cfg, epo
         # log_probs: (T', B, vocab)
         loss = criterion(log_probs, tokens, out_lengths, token_lengths)
 
+        # Entropy regularization (label smoothing equivalent for CTC)
+        smooth_w = t_cfg.get('label_smoothing', 0.0)
+        if smooth_w > 0:
+            entropy = -(log_probs.exp() * log_probs).sum(dim=-1).mean()
+            loss = loss - smooth_w * entropy
+
         if torch.isnan(loss) or torch.isinf(loss):
             continue  # skip bad batches
 
